@@ -19,8 +19,7 @@ void write( FileStorage& fs, const String& name, const Mat& m )
         fs << "cols" << m.cols;
         fs << "dt" << fs::encodeFormat( m.type(), dt, sizeof(dt) );
         fs << "data" << "[:";
-        for( int i = 0; i < m.rows; i++ )
-            fs.writeRaw(dt, m.ptr(i), m.cols*m.elemSize());
+        fs.writeRaw(dt, m.ptr(), m.total()*m.elemSize());
         fs << "]";
         fs.endWriteStruct();
     }

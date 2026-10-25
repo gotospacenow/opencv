@@ -1,0 +1,28 @@
+#use_cache "/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/.cache"
+#do_unpack "kleidicv-26.03.tar.gz" "b85a745bfe0e87e67e30be9533eb6b24" "https://gitlab.arm.com/kleidi/kleidicv/-/archive/26.03/kleidicv-26.03.tar.gz" "/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/build-demo/3rdparty/kleidicv"
+#check_md5 "/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/.cache/kleidicv/b85a745bfe0e87e67e30be9533eb6b24-kleidicv-26.03.tar.gz"
+#mismatch_md5 "/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/.cache/kleidicv/b85a745bfe0e87e67e30be9533eb6b24-kleidicv-26.03.tar.gz" "d41d8cd98f00b204e9800998ecf8427e"
+#delete "/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/.cache/kleidicv/b85a745bfe0e87e67e30be9533eb6b24-kleidicv-26.03.tar.gz"
+#cmake_download "/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/.cache/kleidicv/b85a745bfe0e87e67e30be9533eb6b24-kleidicv-26.03.tar.gz" "https://gitlab.arm.com/kleidi/kleidicv/-/archive/26.03/kleidicv-26.03.tar.gz"
+#try 1
+# Uses proxy env variable no_proxy == '127.0.0.1,::1,localhost'
+# Uses proxy env variable https_proxy == 'http://127.0.0.1:63933'
+#   Trying 127.0.0.1:63933...
+# Connected to 127.0.0.1 (127.0.0.1) port 63933
+# CONNECT tunnel: HTTP/1.1 negotiated
+# allocate connect buffer
+# Establish HTTP proxy tunnel to gitlab.arm.com:443
+# CONNECT gitlab.arm.com:443 HTTP/1.1
+# Host: gitlab.arm.com:443
+# User-Agent: curl/8.7.1
+# Proxy-Connection: Keep-Alive
+# 
+# HTTP/1.1 403 Forbidden
+# content-type: text/plain
+# content-length: 92
+# date: Sun, 25 Oct 2026 19:10:18 GMT
+# 
+# The requested URL returned error: 403
+# Closing connection
+# 
+

@@ -4451,14 +4451,17 @@ protected:
 enum PutTextFlags
 {
     PUT_TEXT_ALIGN_LEFT=0,  // put the text to the right from the origin
-    PUT_TEXT_ALIGN_CENTER=1,// center the text at the origin; not implemented yet
+    PUT_TEXT_ALIGN_CENTER=1,// center each line of text at the origin
     PUT_TEXT_ALIGN_RIGHT=2, // put the text to the left of the origin
     PUT_TEXT_ALIGN_MASK=3,  // alignment mask
     PUT_TEXT_ORIGIN_TL=0,
     PUT_TEXT_ORIGIN_BL=32,  // treat the target image as having bottom-left origin
-    PUT_TEXT_WRAP=128       // wrap text to the next line if it does not fit
+    PUT_TEXT_WRAP=128       // wrap to the next line at word boundaries when possible
 };
 
+/** @example samples/cpp/snippets/puttext_wrap.cpp
+FontFace putText with PUT_TEXT_WRAP, wrapping a long caption at word boundaries inside a panel.
+*/
 /** @brief Draws a text string using specified font.
 
 The function cv::putText renders the specified text string in the image. Symbols that cannot be rendered
@@ -4478,13 +4481,15 @@ example. The function returns the coordinates in pixels from where the text can 
        The parameter is ignored if the font is not a variable font or if it does not provide variation along 'wght' axis.
        If the weight is 0, then the weight, currently set via setInstance(), is used.
 @param flags Various flags, see PUT_TEXT_...
-@param wrap The optional text wrapping range:
-       In the case of left-to-right (LTR) text if the printed character would cross wrap.end boundary,
-       the "cursor" is set to wrap.start.
-       In the case of right-to-left (RTL) text it's vice versa.
-       If the parameters is not set,
-       [org.x, img.cols] is used for LTR text and
-       [0, org.x] is for RTL one.
+@param wrap The optional text wrapping range (used when PUT_TEXT_WRAP is set):
+       In the case of left-to-right (LTR) text, layout prefers wrapping at word
+       boundaries; if a single word is wider than the range it may still break
+       mid-word. When a break would cross wrap.end, the "cursor" moves to wrap.start
+       on the next line. In the case of right-to-left (RTL) text it's vice versa.
+       If the parameter is not set,
+       [org.x, img.cols] is used for left-aligned text,
+       [0, org.x] is for right-aligned text, and
+       [0, img.cols] is for center-aligned text (each line is centered on org.x).
 */
 CV_EXPORTS_W Point putText( InputOutputArray img, const String& text, Point org,
                             Scalar color, FontFace& fface, int size, int weight=0,

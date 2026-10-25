@@ -873,6 +873,124 @@ TEST(Drawing, ttf_text)
 #endif
 }
 
+// Verifies PUT_TEXT_WRAP breaks on spaces rather than mid-word when possible.
+// Uses the compiled-in "sans" font only — no opencv_extra dependency.
+TEST(Drawing, ttf_text_wrap_word_boundary)
+{
+    FontFace sans("sans");
+    const int size = 28;
+    const int weight = 400;
+    const Point org(10, 40);
+    const PutTextFlags wrapLeft = (PutTextFlags)(PUT_TEXT_ALIGN_LEFT | PUT_TEXT_WRAP);
+
+    // Window fits the first word but not "hello world" → second word moves to next line.
+    Rect hello = getTextSize(Size(), "hello", org, sans, size, weight, PUT_TEXT_ALIGN_LEFT);
+    Rect world = getTextSize(Size(), "world", org, sans, size, weight, PUT_TEXT_ALIGN_LEFT);
+    ASSERT_GT(hello.width, 0);
+    ASSERT_GT(world.width, 0);
+    const Size canvas(org.x + hello.width + 8, 160);
+    Rect phrase = getTextSize(Size(), "hello world", org, sans, size, weight, PUT_TEXT_ALIGN_LEFT);
+    ASSERT_GT(phrase.width, canvas.width); // must actually need wrapping
+
+    Rect wrapped = getTextSize(canvas, "hello world", org, sans, size, weight, wrapLeft);
+    EXPECT_GT(wrapped.height, hello.height);
+    // Width should track the longer word, not the full unwrapped phrase.
+    EXPECT_LE(wrapped.width, std::max(hello.width, world.width) + size);
+    EXPECT_LT(wrapped.width, phrase.width);
+
+    Mat img(canvas, CV_8UC3, Scalar::all(255));
+    putText(img, "hello world", org, Scalar(0, 0, 0), sans, size, weight, wrapLeft);
+    EXPECT_LT(mean(img)[0], 255.0);
+
+    // A single overlong token still wraps (character fallback) without crashing.
+    const string longword = "Supercalifragilisticexpialidocious";
+    const Size wide(220, 200);
+    Rect lw = getTextSize(wide, longword, org, sans, size, weight, wrapLeft);
+    Rect lw_one = getTextSize(Size(), longword, org, sans, size, weight, PUT_TEXT_ALIGN_LEFT);
+    EXPECT_GT(lw.height, lw_one.height);
+    EXPECT_LE(lw.width, wide.width + size);
+}
+
+// CENTER + WRAP must keep each visual line centered on org.x AND confine the
+// ink to the wrap Range (trusted UI panel). Escaping that range is a layout
+// confinement failure — caption overlays can paint outside their host control.
+// Uses the compiled-in "sans" font only — no opencv_extra dependency.
+TEST(Drawing, ttf_text_align_center_wrap)
+{
+    FontFace sans("sans");
+    const int size = 28;
+    const int weight = 400;
+    const Point org(200, 40);
+    const Size canvas(400, 240);
+    const PutTextFlags flags =
+        (PutTextFlags)(PUT_TEXT_ALIGN_CENTER | PUT_TEXT_WRAP);
+    // Long enough to soft-wrap inside the canvas; several words per line.
+    const string text = "alpha bravo charlie delta echo foxtrot";
+
+    Rect one = getTextSize(Size(), "alpha", org, sans, size, weight, PUT_TEXT_ALIGN_LEFT);
+    Rect full = getTextSize(Size(), text, org, sans, size, weight, PUT_TEXT_ALIGN_LEFT);
+    ASSERT_GT(full.width, canvas.width); // must wrap
+    ASSERT_GT(one.width, 0);
+
+    Rect wrapped = getTextSize(canvas, text, org, sans, size, weight, flags);
+    // Overall bbox of wrapped centered text should still straddle org.x.
+    EXPECT_NEAR(wrapped.x + wrapped.width / 2, org.x, 2)
+        << "CENTER+WRAP bbox center drifted from org.x"
+        << " (bbox=[" << wrapped.x << "," << wrapped.x + wrapped.width
+        << "] center=" << (wrapped.x + wrapped.width / 2) << " org.x=" << org.x << ")";
+    EXPECT_GT(wrapped.height, one.height);
+
+    // Explicit wrap range narrower than the canvas (common UI panel case).
+    // Confinement: ink must stay inside [panel.start, panel.end].
+    const Range panel(80, 320);
+    Rect panelBox = getTextSize(canvas, text, org, sans, size, weight, flags, panel);
+    EXPECT_NEAR(panelBox.x + panelBox.width / 2, org.x, 2)
+        << "CENTER+WRAP with custom Range drifted from org.x"
+        << " (bbox=[" << panelBox.x << "," << panelBox.x + panelBox.width
+        << "] center=" << (panelBox.x + panelBox.width / 2) << " org.x=" << org.x << ")";
+    EXPECT_GE(panelBox.x, panel.start)
+        << "CENTER+WRAP escaped trusted panel on the left"
+        << " (bbox.x=" << panelBox.x << " panel.start=" << panel.start << ")";
+    EXPECT_LE(panelBox.x + panelBox.width, panel.end)
+        << "CENTER+WRAP escaped trusted panel on the right"
+        << " (bbox.right=" << (panelBox.x + panelBox.width)
+        << " panel.end=" << panel.end << ")";
+}
+
+// Verifies PUT_TEXT_ALIGN_CENTER centers each line on org.x (and matches LEFT/RIGHT
+// widths). Uses the compiled-in "sans" font only — no opencv_extra dependency.
+TEST(Drawing, ttf_text_align_center)
+{
+    FontFace sans("sans");
+    const string text = "Centered OpenCV";
+    const int size = 32;
+    const int weight = 400;
+    const Point org(400, 80);
+    const Size canvas(800, 160);
+
+    Rect left = getTextSize(canvas, text, org, sans, size, weight, PUT_TEXT_ALIGN_LEFT);
+    Rect center = getTextSize(canvas, text, org, sans, size, weight, PUT_TEXT_ALIGN_CENTER);
+    Rect right = getTextSize(canvas, text, org, sans, size, weight, PUT_TEXT_ALIGN_RIGHT);
+
+    ASSERT_GT(left.width, 0);
+    EXPECT_EQ(left.width, center.width);
+    EXPECT_EQ(left.width, right.width);
+
+    // LEFT grows to the right of org; RIGHT to the left; CENTER straddles org.
+    EXPECT_EQ(left.x, org.x);
+    EXPECT_NEAR(right.x + right.width - 1, org.x, 1);
+    EXPECT_NEAR(center.x + center.width / 2, org.x, 1);
+
+    // Multi-line: each line is centered independently on the same org.x.
+    const string multiline = "Short\nA much longer centered line";
+    Rect ml = getTextSize(canvas, multiline, org, sans, size, weight, PUT_TEXT_ALIGN_CENTER);
+    EXPECT_NEAR(ml.x + ml.width / 2, org.x, 1);
+
+    Mat img(canvas, CV_8UC3, Scalar::all(255));
+    putText(img, text, org, Scalar(0, 0, 0), sans, size, weight, PUT_TEXT_ALIGN_CENTER);
+    EXPECT_LT(mean(img)[0], 255.0);
+}
+
 // Re-registers the external test fonts when a test that unregistered them finishes.
 struct ExternalTestFontsGuard
 {

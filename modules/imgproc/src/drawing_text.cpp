@@ -23,6 +23,8 @@
 //      built-in rasterizer (hb-raster) into a grayscale A8 coverage mask and
 //      cached; the layout walks the pen, applies offsets/advances, handles line
 //      wrapping/alignment, and alpha-blends the masks onto the image.
+//      With PUT_TEXT_WRAP, LEFT/CENTER layout prefers word boundaries (wrap before
+//      a word that would not fit); overlong words and RIGHT still break mid-run.
 //
 // Conventions:
 //   * Positions/advances are HarfBuzz 26.6 fixed point (1/64 px); the layout
@@ -43,6 +45,8 @@
 #include <list>
 #include <tuple>
 #include <unordered_map>
+#include <cstdio>
+#include <chrono>
 #include "zlib.h"
 
 #ifdef HAVE_HARFBUZZ
@@ -1039,6 +1043,12 @@ Point FontRenderEngine::putText_(
             x0 = 0;
             x1 = org.x;
         }
+        else if(alignment == PUT_TEXT_ALIGN_CENTER)
+        {
+            // Full image width as the wrap window; each line is centered on org.x.
+            x0 = 0;
+            x1 = imgsize.width > 0 ? imgsize.width : INT_MAX;
+        }
         else
         {
             x0 = org.x;
@@ -1052,6 +1062,24 @@ Point FontRenderEngine::putText_(
             *bbox_ = Rect(org.x, org.y, 0, 0);
         return org;
     }
+
+    // #region agent log
+    if(wrap && alignment == PUT_TEXT_ALIGN_CENTER)
+    {
+        auto _ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        if(FILE* _df = std::fopen("/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/.cursor/debug-47f924.log", "a"))
+        {
+            std::fprintf(_df,
+                "{\"sessionId\":\"47f924\",\"runId\":\"pre-fix\",\"hypothesisId\":\"D\","
+                "\"location\":\"drawing_text.cpp:wrap_window\",\"message\":\"CENTER+WRAP window resolved\","
+                "\"data\":{\"org_x\":%d,\"x0\":%d,\"x1\":%d,\"window\":%d,\"img_w\":%d,\"wrapRange_start\":%d,\"wrapRange_end\":%d},"
+                "\"timestamp\":%lld}\n",
+                org.x, x0, x1, x1 - x0, imgsize.width, wrapRange.start, wrapRange.end, (long long)_ts);
+            std::fclose(_df);
+        }
+    }
+    // #endregion
 
     fontface->setParams(size, weight);
 
@@ -1359,11 +1387,55 @@ Point FontRenderEngine::putText_(
         // (TODO: in the case of right alignment we need to render it from the right-most character)
         int nglyphs = (int)glyphs.size();
         int space_glyph = -1;
+
+        // Center each shaped line around org.x by shifting the pen before layout.
+        // Multi-line strings (explicit '\n') are centered independently per line.
+        if(alignment == PUT_TEXT_ALIGN_CENTER && nglyphs > 0)
+        {
+            int line_width = 0;
+            for(int g = 0; g < nglyphs; g++)
+                line_width += roundFixPt(glyphs[g].pos.x_advance, FRAC_BITS);
+            // Center using the full shaped run width. Soft-wrap (PUT_TEXT_WRAP) may
+            // later break this run across visual lines; those continuations re-anchor
+            // below when a wrap is taken.
+            pen.x = org.x - line_width / 2;
+            // #region agent log
+            if(wrap)
+            {
+                int _fit_w = 0;
+                const int _window = x1 - x0;
+                for(int _g = 0; _g < nglyphs; _g++)
+                {
+                    int _adv = roundFixPt(glyphs[_g].pos.x_advance, FRAC_BITS);
+                    if(_fit_w > 0 && _fit_w + _adv > _window)
+                        break;
+                    _fit_w += _adv;
+                }
+                auto _ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                if(FILE* _df = std::fopen("/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/.cursor/debug-47f924.log", "a"))
+                {
+                    std::fprintf(_df,
+                        "{\"sessionId\":\"47f924\",\"runId\":\"pre-fix\",\"hypothesisId\":\"A\","
+                        "\"location\":\"drawing_text.cpp:center_init\",\"message\":\"initial center uses full run width\","
+                        "\"data\":{\"org_x\":%d,\"full_run_width\":%d,\"first_line_fit_width\":%d,\"pen_x\":%d,"
+                        "\"x0\":%d,\"x1\":%d,\"nglyphs\":%d,\"would_escape_left\":%d},"
+                        "\"timestamp\":%lld}\n",
+                        org.x, line_width, _fit_w, pen.x, x0, x1, nglyphs,
+                        pen.x < x0 ? 1 : 0, (long long)_ts);
+                    std::fclose(_df);
+                }
+            }
+            // #endregion
+        }
+
         min_x = std::min(min_x, pen.x);
         max_x = std::max(max_x, pen.x);
 
         curr_hb_font = 0;
         int ascent = 0, descent = 0, linegap = 0;
+        // At the start of a visual line the next non-space glyph begins a word.
+        bool last_was_space = true;
         for(j = 0; j < nglyphs; j++)
         {
             const FontGlyph& glyph = glyphs[alignment == PUT_TEXT_ALIGN_RIGHT ? nglyphs - j - 1 : j];
@@ -1487,16 +1559,125 @@ Point FontRenderEngine::putText_(
             int dy = roundFixPt(pos.y_advance, FRAC_BITS);
             int new_pen_x = pen.x + dx*alignSign;
             nextline_dy = max(nextline_dy, cached->linegap);
-            // TODO: this wrapping algorithm is quite dumb,
-            // preferably should split text at word boundary
+            const bool is_space = (glyph.index == space_glyph);
+
+            // Word-boundary wrap (LEFT/CENTER): before placing the first glyph of a
+            // word, if the whole word does not fit on the remainder of this line but
+            // does fit in the wrap window alone, start a new line. Overlong words
+            // and RIGHT alignment still use the character wrap below.
+            if( wrap && imgsize.width > 0 && alignment != PUT_TEXT_ALIGN_RIGHT &&
+                !is_space && last_was_space && pen.x*alignSign > x0*alignSign )
+            {
+                int word_width = 0;
+                bool word_fits_window = true;
+                const int window = x1 - x0;
+                for(int g = j; g < nglyphs; g++)
+                {
+                    const FontGlyph& wg = glyphs[g];
+                    hb_codepoint_t sp = 0;
+                    int wsp = hb_font_get_nominal_glyph(wg.hb_font, ' ', &sp) ? (int)sp : -1;
+                    if((int)wg.index == wsp)
+                        break;
+                    int adv = roundFixPt(wg.pos.x_advance, FRAC_BITS);
+                    if(window > 0 && word_width + adv > window)
+                    {
+                        word_fits_window = false;
+                        break;
+                    }
+                    word_width += adv;
+                }
+                if(word_fits_window && word_width > 0 &&
+                   (pen.x + word_width)*alignSign > x1*alignSign)
+                {
+                    // #region agent log
+                    int _cont_w = 0;
+                    if(alignment == PUT_TEXT_ALIGN_CENTER)
+                    {
+                        for(int _g = j; _g < nglyphs; _g++)
+                        {
+                            int _adv = roundFixPt(glyphs[_g].pos.x_advance, FRAC_BITS);
+                            if(_cont_w > 0 && _cont_w + _adv > window)
+                                break;
+                            _cont_w += _adv;
+                        }
+                    }
+                    // #endregion
+                    pen.y += nextline_dy;
+                    dy = 0;
+                    if(alignment == PUT_TEXT_ALIGN_CENTER)
+                        // Re-anchor the wrapped word on org.x. Word-boundary wraps
+                        // land here; character-wrap fallback (below) handles the
+                        // overlong-word / RIGHT cases.
+                        pen.x = org.x - word_width / 2;
+                    else
+                        pen.x = x0;
+                    // #region agent log
+                    if(alignment == PUT_TEXT_ALIGN_CENTER)
+                    {
+                        auto _ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::system_clock::now().time_since_epoch()).count();
+                        if(FILE* _df = std::fopen("/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/.cursor/debug-47f924.log", "a"))
+                        {
+                            std::fprintf(_df,
+                                "{\"sessionId\":\"47f924\",\"runId\":\"pre-fix\",\"hypothesisId\":\"B\","
+                                "\"location\":\"drawing_text.cpp:word_wrap\",\"message\":\"word-boundary wrap recenter\","
+                                "\"data\":{\"org_x\":%d,\"word_width\":%d,\"continuation_line_width\":%d,"
+                                "\"pen_x_after\":%d,\"pen_if_used_continuation\":%d,\"j\":%d,\"x0\":%d,\"x1\":%d},"
+                                "\"timestamp\":%lld}\n",
+                                org.x, word_width, _cont_w, pen.x, org.x - _cont_w / 2,
+                                j, x0, x1, (long long)_ts);
+                            std::fclose(_df);
+                        }
+                    }
+                    // #endregion
+                    wrapped = true;
+                    new_pen_x = pen.x + dx*alignSign;
+                }
+            }
+
+            // Character wrap fallback (RIGHT, mid-word, or overlong single word)
             if( wrap && imgsize.width > 0 && new_pen_x*alignSign > x1*alignSign )
             {
                 pen.y += nextline_dy;
                 dy = 0;
-                pen.x = x0;
+                if(alignment == PUT_TEXT_ALIGN_CENTER)
+                {
+                    // Re-center the remainder of this glyph run on org.x.
+                    int from = is_space ? j + 1 : j;
+                    int rest_width = 0;
+                    for(int g = from; g < nglyphs; g++)
+                    {
+                        int adv = roundFixPt(glyphs[g].pos.x_advance, FRAC_BITS);
+                        if(rest_width > 0 && rest_width + adv > (x1 - x0))
+                            break;
+                        rest_width += adv;
+                    }
+                    pen.x = org.x - rest_width / 2;
+                    // #region agent log
+                    {
+                        auto _ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::system_clock::now().time_since_epoch()).count();
+                        if(FILE* _df = std::fopen("/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/.cursor/debug-47f924.log", "a"))
+                        {
+                            std::fprintf(_df,
+                                "{\"sessionId\":\"47f924\",\"runId\":\"pre-fix\",\"hypothesisId\":\"C\","
+                                "\"location\":\"drawing_text.cpp:char_wrap\",\"message\":\"character wrap fallback fired\","
+                                "\"data\":{\"org_x\":%d,\"rest_width\":%d,\"pen_x\":%d,\"from\":%d,\"j\":%d,\"is_space\":%d},"
+                                "\"timestamp\":%lld}\n",
+                                org.x, rest_width, pen.x, from, j, is_space ? 1 : 0, (long long)_ts);
+                            std::fclose(_df);
+                        }
+                    }
+                    // #endregion
+                }
+                else
+                    pen.x = x0;
                 wrapped = true;
-                //max_baseline = 0;
-                if(glyph.index == space_glyph) continue;
+                if(is_space)
+                {
+                    last_was_space = true;
+                    continue;
+                }
                 new_pen_x = pen.x + dx*alignSign;
             }
 
@@ -1522,11 +1703,14 @@ Point FontRenderEngine::putText_(
             pen.y += dy;
             min_x = std::min(min_x, pen.x);
             max_x = std::max(max_x, pen.x);
+            last_was_space = is_space;
         }
 
         if(len > 0 && (pen.x != x0 || segments.empty()))
         {
-            pen.x = x0;
+            // For CENTER the next line's horizontal start is finalized once its
+            // glyphs are shaped (see step 5); park the pen at org.x for now.
+            pen.x = alignment == PUT_TEXT_ALIGN_CENTER ? org.x : x0;
             pen.y += nextline_dy;
             prev_dy = nextline_dy;
         }
@@ -1538,6 +1722,26 @@ Point FontRenderEngine::putText_(
             *bbox_ = Rect(min_x, org.y - max_baseline, max_x - min_x + 1, pen.y - org.y + max_dy + max_baseline);
         else
             *bbox_ = Rect(min_x, org.y - max_dy, max_x - min_x + 1, pen.y - org.y + max_dy + max_baseline);
+        // #region agent log
+        if(wrap && alignment == PUT_TEXT_ALIGN_CENTER)
+        {
+            const Rect& _b = *bbox_;
+            auto _ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            if(FILE* _df = std::fopen("/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/.cursor/debug-47f924.log", "a"))
+            {
+                std::fprintf(_df,
+                    "{\"sessionId\":\"47f924\",\"runId\":\"pre-fix\",\"hypothesisId\":\"E\","
+                    "\"location\":\"drawing_text.cpp:bbox\",\"message\":\"final CENTER+WRAP bbox\","
+                    "\"data\":{\"org_x\":%d,\"min_x\":%d,\"max_x\":%d,\"bbox_x\":%d,\"bbox_w\":%d,"
+                    "\"bbox_center\":%d,\"x0\":%d,\"x1\":%d,\"escaped_left\":%d,\"escaped_right\":%d},"
+                    "\"timestamp\":%lld}\n",
+                    org.x, min_x, max_x, _b.x, _b.width, _b.x + _b.width / 2, x0, x1,
+                    _b.x < x0 ? 1 : 0, (_b.x + _b.width) > x1 ? 1 : 0, (long long)_ts);
+                std::fclose(_df);
+            }
+        }
+        // #endregion
     }
 
     return pen;

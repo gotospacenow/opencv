@@ -677,14 +677,18 @@ void drawPred(vector<int>& classIds, vector<float>& confidences, vector<Rect>& b
             label = labels[classIds[idx]] + ": " + label;
         }
 
-        Rect r = getTextSize(Size(), label, Point(), sans, size, weight);
+        // Soft-wrap long class names inside the box width when possible.
+        const int wrapWidth = max(boxes[idx].width, size * 8);
+        PutTextFlags labelFlags = (PutTextFlags)(PUT_TEXT_ALIGN_LEFT | PUT_TEXT_WRAP);
+        Rect r = getTextSize(Size(wrapWidth, frame.rows), label, Point(), sans, size, weight, labelFlags);
         int baseline = r.y + r.height;
         Size labelSize = Size(r.width, r.height + size/4 - baseline);
 
         top = max(top-thickness/2, labelSize.height);
         rectangle(frame, Point(left-thickness/2, top-(labelSize.height)),
                 Point(left + labelSize.width, top), boxColor, FILLED);
-        putText(frame, label, Point(left, top-size/4), getTextColor(boxColor), sans, size, weight);
+        putText(frame, label, Point(left, top-size/4), getTextColor(boxColor), sans, size, weight,
+                labelFlags, Range(left, left + wrapWidth));
     }
     //![draw_boxes]
 }

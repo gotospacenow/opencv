@@ -47,6 +47,39 @@ class Imgproc_Tests(NewOpenCVTests):
             print(ts, status)
             self.assertTrue(status, "resize result differs from Pillow for target size %s" % (ts,))
 
+    def test_puttext_wrap_word_boundary(self):
+        # FontFace putText with PUT_TEXT_WRAP should soft-wrap at spaces when possible.
+        if not hasattr(cv, 'FontFace') or not hasattr(cv, 'PUT_TEXT_WRAP'):
+            self.skipTest("FontFace / HarfBuzz text API not available")
+        try:
+            sans = cv.FontFace("sans")
+        except cv.error:
+            self.skipTest("built-in sans font not available")
+
+        text = "word wrap keeps phrases intact"
+        size, weight = 28, 400
+        org = (10, 40)
+        canvas_w, canvas_h = 220, 200
+
+        def rect_xywh(r):
+            if hasattr(r, 'width'):
+                return int(r.x), int(r.y), int(r.width), int(r.height)
+            return int(r[0]), int(r[1]), int(r[2]), int(r[3])
+
+        flags = int(cv.PUT_TEXT_ALIGN_LEFT) | int(cv.PUT_TEXT_WRAP)
+        wrapped = cv.getTextSize((canvas_w, canvas_h), text, org, sans, size, weight, flags)
+        nowrap = cv.getTextSize((0, 0), text, org, sans, size, weight, int(cv.PUT_TEXT_ALIGN_LEFT))
+        wx, _, ww, wh = rect_xywh(wrapped)
+        _, _, _, nh = rect_xywh(nowrap)
+
+        self.assertGreater(ww, 0)
+        self.assertGreater(wh, nh)  # wrapped taller than single line
+        self.assertLessEqual(wx + ww, canvas_w)
+
+        img = np.full((canvas_h, canvas_w, 3), 255, dtype=np.uint8)
+        cv.putText(img, text, org, (0, 0, 0), sans, size, weight, flags)
+        self.assertLess(float(img.mean()), 255.0)
+
     def test_warp_reject_nd_input(self):
         # https://github.com/opencv/opencv/issues/29589
         batch = np.zeros((4, 3, 5, 3), dtype=np.uint8)

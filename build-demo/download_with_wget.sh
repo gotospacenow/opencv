@@ -1,0 +1,1 @@
+mkdir -p $(dirname /Users/jan-philipp.breithaupt/Documents/GitHub/opencv/.cache/kleidicv/b85a745bfe0e87e67e30be9533eb6b24-kleidicv-26.03.tar.gz) && wget -O "/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/.cache/kleidicv/b85a745bfe0e87e67e30be9533eb6b24-kleidicv-26.03.tar.gz" "https://gitlab.arm.com/kleidi/kleidicv/-/archive/26.03/kleidicv-26.03.tar.gz"

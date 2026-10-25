@@ -1,0 +1,21 @@
+# Target labels
+ Main
+ opencv_highgui
+ AccuracyTest
+# Source files and their labels
+/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/modules/highgui/test/test_gui.cpp
+ Main
+ opencv_highgui
+ AccuracyTest
+/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/modules/highgui/test/test_main.cpp
+ Main
+ opencv_highgui
+ AccuracyTest
+/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/modules/highgui/test/test_opengl.cpp
+ Main
+ opencv_highgui
+ AccuracyTest
+/Users/jan-philipp.breithaupt/Documents/GitHub/opencv/modules/highgui/test/test_precomp.hpp
+ Main
+ opencv_highgui
+ AccuracyTest
